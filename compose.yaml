@@ -1,12 +1,18 @@
 services:
-  db:
+  postgres:
     image: postgres
+    ports:
+      - "5432:5432"
     restart: always
     environment:
-      POSTGRES_PASSWORD: example
+      POSTGRES_PASSWORD: osuacmoj
+      POSTGRES_USER: spring
+      POSTGRES_DB: problems
+    labels:
+      org.springframework.boot.service-connection: postgres
 
   adminer:
     image: adminer
     restart: always
     ports:
-      - 8080:8080
+      - 1420:8080
