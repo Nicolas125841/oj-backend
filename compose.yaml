@@ -1,4 +1,17 @@
 services:
+  backend:
+    image: backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - 8080:8080
+    volumes:
+      - type: bind
+        source: ./
+        target: /source
+    restart: "no"
+
   postgres:
     image: postgres
     ports:
@@ -10,6 +23,11 @@ services:
       POSTGRES_DB: problems
     labels:
       org.springframework.boot.service-connection: postgres
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   adminer:
     image: adminer

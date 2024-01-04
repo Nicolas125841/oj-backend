@@ -1,0 +1,10 @@
+.env
+runtimeStore/
+testProblems/
+testTestData/
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
