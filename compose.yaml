@@ -1,5 +1,6 @@
 services:
   backend:
+    privileged: true
     image: backend
     depends_on:
       postgres:

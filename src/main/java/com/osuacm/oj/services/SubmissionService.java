@@ -1,5 +1,6 @@
 package com.osuacm.oj.services;
 
+import com.osuacm.oj.runtimes.GccRuntime;
 import com.osuacm.oj.runtimes.Runtime;
 import com.osuacm.oj.stores.problems.ProblemStore;
 import com.osuacm.oj.data.SubmissionStatus;
@@ -19,6 +20,7 @@ import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.AbstractMap;
 import java.util.Comparator;
 import java.util.Map;
 import java.util.Objects;
@@ -27,15 +29,14 @@ import java.util.concurrent.CompletableFuture;
 @Component
 public class SubmissionService {
 
-    public enum RESULT {SERVER_ERROR, COMPILE_ERROR, RUNTIME_ERROR, TIMEOUT, SUCCESS, WRONG_ANSWER};
+    public enum RESULT {SUCCESS, SERVER_ERROR, COMPILE_ERROR, RUNTIME_ERROR, TIMEOUT, WRONG_ANSWER, MEMORY_EXC};
     private static final Log log = LogFactory.getLog(SubmissionService.class);
     private final Path runtimeContainer = Path.of("/runtime");
 
-    @Autowired
-    ProblemStore problemDatabase;
+    private final Map<String, Runtime> runtimes = Map.of("gcc", new GccRuntime());
 
     @Autowired
-    Map<String, Runtime> runtimes;
+    ProblemStore problemDatabase;
 
     private CompletableFuture<Process> compileJava(Path source, Path outputFile) {
         try {
@@ -70,12 +71,12 @@ public class SubmissionService {
             throw new RuntimeException(e);
         }
     };
-    private Mono<Pair<RESULT, Pair<Path, Path>>> runTest(Path source, Path input, long tl, boolean systemTest) throws RuntimeException {
+    private Mono<Pair<RESULT, Path[]>> runTest(String runtime, Path input, Long tl, Long ml, boolean systemTest) throws RuntimeException {
         try {
             Mono<Tuple2<Path, RESULT>> compileProgram =
-                Mono.fromCallable(() -> Files.createTempFile(runtimeContainer, "test", ".out"))
+                Mono.fromCallable(() -> Files.createTempFile(runtimeContainer, "compile", ".error"))
                     .zipWhen(outputFile ->
-                        Mono.fromCallable(() -> compileJava(source, outputFile))
+                        Mono.fromCallable(() -> runtimes.get(runtime).compile(runtimeContainer, outputFile))
                             .flatMap(Mono::fromFuture)
                             .timeout(Duration.ofSeconds(20))
                             .map(process -> {
@@ -87,12 +88,12 @@ public class SubmissionService {
                             .onErrorReturn(RESULT.COMPILE_ERROR)
                     );
 
-            Mono<Tuple2<Path, RESULT>> runProgram =
-                Mono.fromCallable(() -> Files.createTempFile(runtimeContainer, "test", ".out"))
-                    .zipWhen(outputFile ->
+            Mono<Tuple2<Path[], RESULT>> runProgram =
+                Mono.fromCallable(() -> new Path[]{Files.createTempFile(runtimeContainer, "run", ".out"), Files.createTempFile(runtimeContainer, "run", ".error")})
+                    .zipWhen(files ->
                         Mono.using(
                             () -> new FileInputStream(input.toFile()),
-                            stream -> Mono.fromCallable(() -> runJava(source, outputFile, stream)),
+                            stream -> Mono.fromCallable(() -> runtimes.get(runtime).run(runtimeContainer, files[0], files[1], stream, tl, ml)),
                             stream -> {
                                 try {
                                     stream.close();
@@ -102,33 +103,17 @@ public class SubmissionService {
                             }
                         )
                         .flatMap(Mono::fromFuture)
-                        .timeout(Duration.ofSeconds(tl))
-                        .map(process -> {
-                            if(process.exitValue() == 0)
-                                return RESULT.SUCCESS;
-                            else
-                                return RESULT.RUNTIME_ERROR;
-                        })
-                        .onErrorReturn(RESULT.TIMEOUT)
+                        .timeout(Duration.ofSeconds(20))
+                        .map(process -> RESULT.values()[process.exitValue()])
+                        .onErrorReturn(RESULT.SERVER_ERROR)
                     );
 
             return compileProgram
-                    .map(compileResult ->  Pair.of(compileResult.getT2(), Pair.of(compileResult.getT1(), Path.of(""))))
                     .flatMap(data -> {
-                        if(data.getFirst() == RESULT.SUCCESS){
-                            return runProgram.map(runResult -> Pair.of(runResult.getT2(), Pair.of(data.getSecond().getFirst(), runResult.getT1())));
+                        if(data.getT2() == RESULT.SUCCESS){
+                            return runProgram.map(runResult -> Pair.of(runResult.getT2(), runResult.getT1()));
                         }else{
-                            return Mono.just(data);
-                        }
-                    })
-                    .doFinally(signal -> {
-                        try {
-                            FileSystemUtils.deleteRecursively(source);
-
-                            if(!systemTest)
-                                FileSystemUtils.deleteRecursively(input);
-                        } catch (IOException e) {
-                            log.error("Cannot clean files!", e);
+                            return Mono.just(Pair.of(data.getT2(), new Path[] {data.getT1()}));
                         }
                     });
         }catch (Exception e){
@@ -136,11 +121,11 @@ public class SubmissionService {
         }
     }
 
-    public Mono<Pair<RESULT, String>> finalizeResults(Pair<RESULT, Pair<Path, Path>> runData, Path answer){
+    public Mono<Pair<RESULT, String>> finalizeResults(Pair<RESULT, Path[]> runData, Path answer){
         if(runData.getFirst() != RESULT.SUCCESS){
             if(runData.getFirst() == RESULT.COMPILE_ERROR || runData.getFirst() == RESULT.SERVER_ERROR){
                 return Flux.using(
-                            () -> new BufferedReader(new FileReader(runData.getSecond().getFirst().toFile())),
+                            () -> new BufferedReader(new FileReader(runData.getSecond()[0].toFile())),
                             reader -> Flux.fromStream(reader.lines()),
                             reader -> {
                                 try {
@@ -158,7 +143,7 @@ public class SubmissionService {
         }else{
             Flux<String> outputLines =
                 Flux.using(
-                    () -> new BufferedReader(new FileReader(runData.getSecond().getSecond().toFile())),
+                    () -> new BufferedReader(new FileReader(runData.getSecond()[0].toFile())),
                     reader -> Flux.fromStream(reader.lines()),
                     reader -> {
                         try {
@@ -194,7 +179,7 @@ public class SubmissionService {
 
     public Mono<SubmissionStatus> runFormalTest(Long id, TestForm testForm) {
         Mono<Path> loadSource =
-                Mono.fromCallable(() -> Files.createTempFile(runtimeContainer, "test", testForm.getType()))
+                Mono.fromCallable(() -> Files.createFile(runtimeContainer.resolve(runtimes.get(testForm.getType()).getSource())))
                         .flatMap(path -> testForm.getCode().transferTo(path).then(Mono.just(path)));
 
         Flux<File> loadInputFiles =
@@ -231,7 +216,7 @@ public class SubmissionService {
                 .zipWith(loadSource)
                 .flatMapMany(testData ->
                     loadInputFiles
-                        .flatMapSequential(testFile -> runTest(testData.getT2(), testFile.toPath(), 2, true))
+                        .flatMapSequential(testFile -> runTest(testForm.getType(), testFile.toPath(), testData.getT1().getTl(), testData.getT1().getMl(), true))
                         .zipWith(loadAnswerFiles)
                 )
                 .flatMap(runAndAnswerData -> finalizeResults(runAndAnswerData.getT1(), runAndAnswerData.getT2().toPath()))
@@ -241,6 +226,9 @@ public class SubmissionService {
                         sink.complete();
                     }
                 })
+                .doFinally(signal -> {
+                    //clean here
+                })
                 .next()
                 .log()
                 .switchIfEmpty(Mono.just(new SubmissionStatus(true, RESULT.SUCCESS.name(), "All test cases passed!")));
@@ -248,7 +236,7 @@ public class SubmissionService {
 
     public Mono<Pair<File, RESULT>> runCustomTest(TestForm testForm) {
         Mono<Path> loadSource =
-                Mono.fromCallable(() -> Files.createTempFile(runtimeContainer, "test", testForm.getType()))
+            Mono.fromCallable(() -> Files.createFile(runtimeContainer.resolve(runtimes.get(testForm.getType()).getSource())))
                 .flatMap(path -> testForm.getCode().transferTo(path).then(Mono.just(path)));
 
         Mono<Path> loadInput =
@@ -257,18 +245,19 @@ public class SubmissionService {
 
         return loadSource
                 .zipWith(loadInput)
-                .flatMap(files -> runTest(files.getT1(), files.getT2(), 15, false))
+                .flatMap(files -> runTest(testForm.getType(), files.getT1(), 15L, 2000L, false))
                 .doOnSuccess(log::info)
                 .map(data -> {
                     if(data.getFirst() == RESULT.COMPILE_ERROR){
-                        FileSystemUtils.deleteRecursively(data.getSecond().getSecond().toFile());
-
-                        return Pair.of(data.getSecond().getFirst().toFile(), data.getFirst());
-                    }else {
-                        FileSystemUtils.deleteRecursively(data.getSecond().getFirst().toFile());
-
-                        return Pair.of(data.getSecond().getSecond().toFile(), data.getFirst());
+                        return Pair.of(data.getSecond()[0].toFile(), data.getFirst());
+                    } else if(data.getFirst() == RESULT.SUCCESS){
+                        return Pair.of(data.getSecond()[0].toFile(), data.getFirst());
+                    } else {
+                        return Pair.of(data.getSecond()[1].toFile(), data.getFirst());
                     }
+                })
+                .doFinally(signal -> {
+                    //clean here
                 })
                 .log();
     }

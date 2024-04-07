@@ -1,17 +1,17 @@
 package com.osuacm.oj.runtimes;
 
-import reactor.core.publisher.Mono;
-
+import java.io.InputStream;
 import java.nio.file.Path;
+import java.util.concurrent.CompletableFuture;
 
 public class OpenJDK17Runtime implements Runtime {
     @Override
-    public Mono<RESULT> compile(Path context, Path source, Path output, Path error) {
+    public CompletableFuture<Process> compile(Path context, Path error) {
         return null;
     }
 
     @Override
-    public Mono<RESULT> run(Path context, Path output, Path error, Long tl, Long ml) {
+    public CompletableFuture<Process> run(Path context, Path output, Path error, InputStream input, Long tl, Long ml) {
         return null;
     }
 }

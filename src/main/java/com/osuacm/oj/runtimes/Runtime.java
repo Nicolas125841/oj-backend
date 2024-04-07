@@ -1,17 +1,21 @@
 package com.osuacm.oj.runtimes;
 
 import org.springframework.scheduling.annotation.Async;
-import reactor.core.publisher.Mono;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Path;
+import java.util.concurrent.CompletableFuture;
 
 public interface Runtime {
-    enum RESULT {SERVER_ERROR, COMPILE_ERROR, RUNTIME_ERROR, TIMEOUT, SUCCESS, WRONG_ANSWER};
+    @Async
+    CompletableFuture<Process> compile(Path context, Path error) throws IOException;
 
     @Async
-    Mono<RESULT> compile(Path context, Path source, Path output, Path error);
+    CompletableFuture<Process> run(Path context, Path output, Path error, InputStream input, Long tl, Long ml) throws IOException;
 
-    @Async
-    Mono<RESULT> run(Path context, Path output, Path error, Long tl, Long ml);
+    default String getSource() {
+        return "";
+    }
 
 }
