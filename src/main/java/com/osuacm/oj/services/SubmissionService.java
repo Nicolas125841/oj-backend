@@ -1,11 +1,12 @@
 package com.osuacm.oj.services;
 
+import com.osuacm.oj.data.TestResult;
 import com.osuacm.oj.runtimes.GccRuntime;
 import com.osuacm.oj.runtimes.Runtime;
 import com.osuacm.oj.stores.problems.ProblemStore;
 import com.osuacm.oj.data.SubmissionStatus;
 import com.osuacm.oj.data.TestForm;
-import io.netty.util.CharsetUtil;
+import org.apache.commons.io.input.ReversedLinesFileReader;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +18,7 @@ import reactor.core.publisher.Mono;
 import reactor.util.function.Tuple2;
 
 import java.io.*;
+import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -33,45 +35,12 @@ public class SubmissionService {
     private static final Log log = LogFactory.getLog(SubmissionService.class);
     private final Path runtimeContainer = Path.of("/runtime");
 
-    private final Map<String, Runtime> runtimes = Map.of("gcc", new GccRuntime());
+    private final Map<String, Runtime> runtimes = Map.of("C 98", new GccRuntime());
 
     @Autowired
     ProblemStore problemDatabase;
 
-    private CompletableFuture<Process> compileJava(Path source, Path outputFile) {
-        try {
-            return new ProcessBuilder()
-                    .command("cmd.exe", "/c", "javac -encoding UTF-8 -sourcepath . -d . ".concat(source.toFile().getName()))
-                    .directory(runtimeContainer.toFile())
-                    .redirectOutput(outputFile.toFile())
-                    .redirectError(outputFile.toFile())
-                    .start()
-                    .onExit();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-    };
-
-    private CompletableFuture<Process> runJava(Path source, Path outputFile, InputStream input) {
-        try {
-            Process runJava = new ProcessBuilder()
-                                    .command("cmd.exe", "/c", "java Solution -Dfile.encoding=UTF-8 -XX:+UseSerialGC -Xss64m -Xms1920m -Xmx1920m")
-                                    .directory(runtimeContainer.toFile())
-                                    .redirectOutput(outputFile.toFile())
-                                    .redirectError(outputFile.toFile())
-                                    .start();
-
-            input.transferTo(runJava.getOutputStream());
-            runJava.getOutputStream().write(CharsetUtil.UTF_8.encode("\n").array());
-            runJava.getOutputStream().flush();
-            runJava.getOutputStream().close();
-
-            return runJava.onExit();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-    };
-    private Mono<Pair<RESULT, Path[]>> runTest(String runtime, Path input, Long tl, Long ml, boolean systemTest) throws RuntimeException {
+    private Mono<Pair<RESULT, Path[]>> runTest(String runtime, Path input, Long tl, Long ml) throws RuntimeException {
         try {
             Mono<Tuple2<Path, RESULT>> compileProgram =
                 Mono.fromCallable(() -> Files.createTempFile(runtimeContainer, "compile", ".error"))
@@ -91,17 +60,7 @@ public class SubmissionService {
             Mono<Tuple2<Path[], RESULT>> runProgram =
                 Mono.fromCallable(() -> new Path[]{Files.createTempFile(runtimeContainer, "run", ".out"), Files.createTempFile(runtimeContainer, "run", ".error")})
                     .zipWhen(files ->
-                        Mono.using(
-                            () -> new FileInputStream(input.toFile()),
-                            stream -> Mono.fromCallable(() -> runtimes.get(runtime).run(runtimeContainer, files[0], files[1], stream, tl, ml)),
-                            stream -> {
-                                try {
-                                    stream.close();
-                                } catch (IOException e) {
-                                    log.error("Cannot close input stream.", e);
-                                }
-                            }
-                        )
+                        Mono.fromCallable(() -> runtimes.get(runtime).run(runtimeContainer, files[0], files[1], input, tl, ml))
                         .flatMap(Mono::fromFuture)
                         .timeout(Duration.ofSeconds(20))
                         .map(process -> RESULT.values()[process.exitValue()])
@@ -137,8 +96,12 @@ public class SubmissionService {
                         )
                         .reduce("Compilation message: ", (str, line) -> str.concat("\n").concat(line))
                         .map(message -> Pair.of(runData.getFirst(), message));
-            }else {
-                return Mono.just(Pair.of(runData.getFirst(), "Runtime error!"));
+            } else if(runData.getFirst() == RESULT.TIMEOUT) {
+                return Mono.just(Pair.of(runData.getFirst(), "TLE"));
+            } else if(runData.getFirst() == RESULT.MEMORY_EXC) {
+                return Mono.just(Pair.of(runData.getFirst(), "MLE"));
+            } else {
+                return Mono.just(Pair.of(runData.getFirst(), "RTE"));
             }
         }else{
             Flux<String> outputLines =
@@ -216,7 +179,7 @@ public class SubmissionService {
                 .zipWith(loadSource)
                 .flatMapMany(testData ->
                     loadInputFiles
-                        .flatMapSequential(testFile -> runTest(testForm.getType(), testFile.toPath(), testData.getT1().getTl(), testData.getT1().getMl(), true))
+                        .flatMapSequential(testFile -> runTest(testForm.getType(), testFile.toPath(), testData.getT1().getTl(), testData.getT1().getMl()))
                         .zipWith(loadAnswerFiles)
                 )
                 .flatMap(runAndAnswerData -> finalizeResults(runAndAnswerData.getT1(), runAndAnswerData.getT2().toPath()))
@@ -226,15 +189,12 @@ public class SubmissionService {
                         sink.complete();
                     }
                 })
-                .doFinally(signal -> {
-                    //clean here
-                })
                 .next()
                 .log()
                 .switchIfEmpty(Mono.just(new SubmissionStatus(true, RESULT.SUCCESS.name(), "All test cases passed!")));
     }
 
-    public Mono<Pair<File, RESULT>> runCustomTest(TestForm testForm) {
+    public Mono<TestResult> runCustomTest(TestForm testForm) {
         Mono<Path> loadSource =
             Mono.fromCallable(() -> Files.createFile(runtimeContainer.resolve(runtimes.get(testForm.getType()).getSource())))
                 .flatMap(path -> testForm.getCode().transferTo(path).then(Mono.just(path)));
@@ -243,21 +203,31 @@ public class SubmissionService {
                 Mono.fromCallable(() -> Files.createTempFile(runtimeContainer, "test", ".in"))
                 .flatMap(path -> testForm.getInput().transferTo(path).then(Mono.just(path)));
 
+        try {
+            FileSystemUtils.deleteRecursively(runtimeContainer);
+            Files.createDirectory(runtimeContainer);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
         return loadSource
-                .zipWith(loadInput)
-                .flatMap(files -> runTest(testForm.getType(), files.getT1(), 15L, 2000L, false))
+                .then(loadInput)
+                .flatMap(file -> runTest(testForm.getType(), file, 15000L, 3000L))
                 .doOnSuccess(log::info)
                 .map(data -> {
-                    if(data.getFirst() == RESULT.COMPILE_ERROR){
-                        return Pair.of(data.getSecond()[0].toFile(), data.getFirst());
-                    } else if(data.getFirst() == RESULT.SUCCESS){
-                        return Pair.of(data.getSecond()[0].toFile(), data.getFirst());
-                    } else {
-                        return Pair.of(data.getSecond()[1].toFile(), data.getFirst());
-                    }
-                })
-                .doFinally(signal -> {
-                    //clean here
+                        if (data.getFirst() == RESULT.COMPILE_ERROR) {
+                            return new TestResult(data.getFirst(), 0L, 0L, data.getSecond()[0]);
+                        } else {
+                            try(ReversedLinesFileReader rlr = new ReversedLinesFileReader(data.getSecond()[1].toFile(), Charset.defaultCharset())) {
+                                if (data.getFirst() == RESULT.SUCCESS) {
+                                    return new TestResult(data.getFirst(), Long.parseLong(rlr.readLine()), Long.parseLong(rlr.readLine()), data.getSecond()[0]);
+                                } else {
+                                    return new TestResult(data.getFirst(), Long.parseLong(rlr.readLine()), Long.parseLong(rlr.readLine()), data.getSecond()[1]);
+                                }
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                        }
                 })
                 .log();
     }

@@ -12,7 +12,7 @@ public interface Runtime {
     CompletableFuture<Process> compile(Path context, Path error) throws IOException;
 
     @Async
-    CompletableFuture<Process> run(Path context, Path output, Path error, InputStream input, Long tl, Long ml) throws IOException;
+    CompletableFuture<Process> run(Path context, Path output, Path error, Path input, Long tl, Long ml) throws IOException;
 
     default String getSource() {
         return "";

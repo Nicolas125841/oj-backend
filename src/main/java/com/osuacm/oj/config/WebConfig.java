@@ -17,7 +17,7 @@ public class WebConfig implements WebFluxConfigurer {
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         registry.addResourceHandler("/problemData/**")
-                .addResourceLocations("file:/problems")
+                .addResourceLocations("file:/data/")
                 .setCacheControl(CacheControl.maxAge(365, TimeUnit.DAYS));
     }
 }

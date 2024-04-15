@@ -41,10 +41,6 @@ void attach_cgroup(const long ml) {
     SAFE(fprintf(fp, "0") < 0)
     SAFE(fclose(fp))
 
-    SAFE((fp = fopen(MEMZSMAX, "w")) == NULL)
-    SAFE(fprintf(fp, "0") < 0)
-    SAFE(fclose(fp))
-
     SAFE((fp = fopen(ATTACH, "w")) == NULL)
     SAFE(fprintf(fp, "%d", getpid()) < 0)
     SAFE(fclose(fp))
@@ -120,7 +116,7 @@ int main(int argc, char* argv[]) {
         long time = metrics.ru_utime.tv_usec + 1000000ul * metrics.ru_utime.tv_sec + metrics.ru_stime.tv_usec + 1000000ul * metrics.ru_stime.tv_sec;
 
         //Set metadata for later parsing
-        fprintf(stderr, "Time: %ld\nMemory: %ld\n", time, memory);
+        fprintf(stderr, "%ld\n%ld\n", memory, time);
 
         int verdict = SERVER_ERROR;
 

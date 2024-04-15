@@ -11,7 +11,7 @@ public class OpenJDK17Runtime implements Runtime {
     }
 
     @Override
-    public CompletableFuture<Process> run(Path context, Path output, Path error, InputStream input, Long tl, Long ml) {
+    public CompletableFuture<Process> run(Path context, Path output, Path error, Path input, Long tl, Long ml) {
         return null;
     }
 }

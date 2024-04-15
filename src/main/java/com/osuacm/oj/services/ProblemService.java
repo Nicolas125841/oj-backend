@@ -22,7 +22,6 @@ import java.util.Map;
 
 @Component
 public class ProblemService {
-    private static final Log log = LogFactory.getLog(ProblemService.class);
     private static final long PAGE_SIZE = 10;
     public static final Path problemsDirectory = Path.of("/data");
     public static final Path testDatasDirectory = Path.of("/tests");

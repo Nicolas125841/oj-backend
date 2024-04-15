@@ -1,18 +1,18 @@
 package com.osuacm.oj.runtimes;
 
-import io.netty.util.CharsetUtil;
+import lombok.extern.java.Log;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
+@Log
 public class GccRuntime implements Runtime {
 
     final String COMPILER = "gcc";
-    final String WRAPPER = "./runwrap.o";
+    final String WRAPPER = "/source/security/runwrap.o";
 
     final List<String> RUN_ARGS = List.of(
         "bwrap",
@@ -20,16 +20,23 @@ public class GccRuntime implements Runtime {
         "/usr",
         "/usr",
         "--ro-bind",
-        ". /subject",
-        "--symlink usr/lib",
+        "/runtime",
+        "/subject",
+        "--symlink",
+        "usr/lib",
         "/lib",
         "--symlink",
         "usr/lib64",
         "/lib64",
         "--chdir",
         "/subject",
-        "--unshare-all",
-        "--cap-drop ALL",
+        "--unshare-user",
+        "--unshare-net",
+        "--unshare-ipc",
+        "--unshare-cgroup",
+        "--unshare-uts",
+        "--cap-drop",
+        "ALL",
         "--die-with-parent",
         "--new-session",
         "./a.out"
@@ -46,23 +53,29 @@ public class GccRuntime implements Runtime {
     }
 
     @Override
-    public CompletableFuture<Process> run(Path context, Path output, Path error, InputStream input, Long tl, Long ml) throws IOException {
-        List<String> runArgs = new ArrayList<>(List.of(WRAPPER, tl.toString(), ml.toString()));
+    public CompletableFuture<Process> run(Path context, Path output, Path error, Path input, Long tl, Long ml) {
+        try {
+            List<String> runArgs = new ArrayList<>(List.of(WRAPPER, tl.toString(), ml.toString()));
 
-        runArgs.addAll(RUN_ARGS);
+            runArgs.addAll(RUN_ARGS);
 
-        Process runJava = new ProcessBuilder()
-            .command(runArgs)
-            .directory(context.toFile())
-            .redirectOutput(output.toFile())
-            .redirectError(error.toFile())
-            .start();
+            Process runJava = new ProcessBuilder()
+                .command(runArgs)
+                .directory(context.toFile())
+                .redirectOutput(output.toFile())
+                .redirectError(error.toFile())
+                .redirectInput(input.toFile())
+                .start();
 
-        input.transferTo(runJava.getOutputStream());
-        runJava.getOutputStream().write(CharsetUtil.UTF_8.encode("\n").array());
-        runJava.getOutputStream().flush();
-        runJava.getOutputStream().close();
+            return runJava.onExit();
+        } catch (IOException e) {
+            log.info(e.getMessage());
+            throw new RuntimeException(e);
+        }
+    }
 
-        return runJava.onExit();
+    @Override
+    public String getSource() {
+        return "solution.c";
     }
 }

@@ -58,6 +58,17 @@ public class AdminSecurityConfig {
     }
 
     @Bean
+    SecurityWebFilterChain springProblemDataChain(ServerHttpSecurity http) {
+        http
+            .csrf(ServerHttpSecurity.CsrfSpec::disable)
+            .securityMatcher(new PathPatternParserServerWebExchangeMatcher("/problemData/**"))
+            .authorizeExchange(authorize -> authorize.anyExchange().permitAll())
+            .httpBasic(withDefaults());
+
+        return http.build();
+    }
+
+    @Bean
     SecurityWebFilterChain springWebFilterChain(ServerHttpSecurity http) {
         http
             .csrf(ServerHttpSecurity.CsrfSpec::disable)
