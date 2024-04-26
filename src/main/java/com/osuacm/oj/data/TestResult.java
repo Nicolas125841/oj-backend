@@ -14,5 +14,6 @@ public class TestResult {
     SubmissionService.RESULT status;
     Long time;
     Long memory;
-    Path output;
+    String output;
+    String info;
 }

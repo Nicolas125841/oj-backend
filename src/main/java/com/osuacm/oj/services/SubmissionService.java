@@ -1,234 +1,164 @@
 package com.osuacm.oj.services;
 
+import com.google.common.collect.Streams;
+import com.osuacm.oj.data.TestForm;
 import com.osuacm.oj.data.TestResult;
 import com.osuacm.oj.runtimes.GccRuntime;
+import com.osuacm.oj.runtimes.Gpp17Runtime;
+import com.osuacm.oj.runtimes.OpenJDK17Runtime;
 import com.osuacm.oj.runtimes.Runtime;
+import com.osuacm.oj.stores.problems.Problem;
 import com.osuacm.oj.stores.problems.ProblemStore;
-import com.osuacm.oj.data.SubmissionStatus;
-import com.osuacm.oj.data.TestForm;
 import org.apache.commons.io.input.ReversedLinesFileReader;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.util.Pair;
 import org.springframework.stereotype.Component;
 import org.springframework.util.FileSystemUtils;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.util.function.Tuple2;
 
 import java.io.*;
-import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.AbstractMap;
-import java.util.Comparator;
-import java.util.Map;
-import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Component
 public class SubmissionService {
 
-    public enum RESULT {SUCCESS, SERVER_ERROR, COMPILE_ERROR, RUNTIME_ERROR, TIMEOUT, WRONG_ANSWER, MEMORY_EXC};
+    public enum RESULT {SUCCESS, SERVER_ERROR, COMPILE_ERROR, RUNTIME_ERROR, TIMEOUT, WRONG_ANSWER, MEMORY_EXC}
     private static final Log log = LogFactory.getLog(SubmissionService.class);
     private final Path runtimeContainer = Path.of("/runtime");
+    private final Long CUSTOM_TEST = -1L;
 
-    private final Map<String, Runtime> runtimes = Map.of("C 98", new GccRuntime());
+    private final ExecutorService submitQueue = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new LinkedBlockingQueue<>(20));
 
+    private final String FILE_PATTERN = "run(?:[0-9]*)(?:\\.in|\\.out|\\.error)$";
+    private final Map<String, Runtime> runtimes = Map.of(
+        "C 98", new GccRuntime(),
+        "Java 17", new OpenJDK17Runtime(),
+        "C++ 17", new Gpp17Runtime()
+    );
     @Autowired
-    ProblemStore problemDatabase;
+    private ProblemStore problemDatabase;
 
-    private Mono<Pair<RESULT, Path[]>> runTest(String runtime, Path input, Long tl, Long ml) throws RuntimeException {
+    private List<Path> collectProblemFiles(Long id, String type) throws FileNotFoundException {
+        Path inputDirectory = ProblemService.testDatasDirectory.resolve(String.valueOf(id));
+
+        if(inputDirectory.toFile().exists() && inputDirectory.toFile().isDirectory()) {
+            return Arrays.stream(Objects.requireNonNull(inputDirectory.toFile()
+                    .listFiles(pathname -> pathname.getName().endsWith(type))))
+                .sorted(Comparator.comparing(File::getName))
+                .map(File::toPath)
+                .toList();
+        } else {
+            throw new FileNotFoundException();
+        }
+    }
+
+    private RESULT compileProgram(String runtime, Path errorTarget) {
         try {
-            Mono<Tuple2<Path, RESULT>> compileProgram =
-                Mono.fromCallable(() -> Files.createTempFile(runtimeContainer, "compile", ".error"))
-                    .zipWhen(outputFile ->
-                        Mono.fromCallable(() -> runtimes.get(runtime).compile(runtimeContainer, outputFile))
-                            .flatMap(Mono::fromFuture)
-                            .timeout(Duration.ofSeconds(20))
-                            .map(process -> {
-                                if(process.exitValue() == 0)
-                                    return RESULT.SUCCESS;
-                                else
-                                    return RESULT.COMPILE_ERROR;
-                            })
-                            .onErrorReturn(RESULT.COMPILE_ERROR)
-                    );
+            Process result = runtimes.get(runtime).compile(runtimeContainer, errorTarget).get(20, TimeUnit.SECONDS);
 
-            Mono<Tuple2<Path[], RESULT>> runProgram =
-                Mono.fromCallable(() -> new Path[]{Files.createTempFile(runtimeContainer, "run", ".out"), Files.createTempFile(runtimeContainer, "run", ".error")})
-                    .zipWhen(files ->
-                        Mono.fromCallable(() -> runtimes.get(runtime).run(runtimeContainer, files[0], files[1], input, tl, ml))
-                        .flatMap(Mono::fromFuture)
-                        .timeout(Duration.ofSeconds(20))
-                        .map(process -> RESULT.values()[process.exitValue()])
-                        .onErrorReturn(RESULT.SERVER_ERROR)
-                    );
-
-            return compileProgram
-                    .flatMap(data -> {
-                        if(data.getT2() == RESULT.SUCCESS){
-                            return runProgram.map(runResult -> Pair.of(runResult.getT2(), runResult.getT1()));
-                        }else{
-                            return Mono.just(Pair.of(data.getT2(), new Path[] {data.getT1()}));
-                        }
-                    });
-        }catch (Exception e){
-            throw new RuntimeException(e);
-        }
-    }
-
-    public Mono<Pair<RESULT, String>> finalizeResults(Pair<RESULT, Path[]> runData, Path answer){
-        if(runData.getFirst() != RESULT.SUCCESS){
-            if(runData.getFirst() == RESULT.COMPILE_ERROR || runData.getFirst() == RESULT.SERVER_ERROR){
-                return Flux.using(
-                            () -> new BufferedReader(new FileReader(runData.getSecond()[0].toFile())),
-                            reader -> Flux.fromStream(reader.lines()),
-                            reader -> {
-                                try {
-                                    reader.close();
-                                } catch (IOException e) {
-                                    log.error("Cannot close reader!", e);
-                                }
-                            }
-                        )
-                        .reduce("Compilation message: ", (str, line) -> str.concat("\n").concat(line))
-                        .map(message -> Pair.of(runData.getFirst(), message));
-            } else if(runData.getFirst() == RESULT.TIMEOUT) {
-                return Mono.just(Pair.of(runData.getFirst(), "TLE"));
-            } else if(runData.getFirst() == RESULT.MEMORY_EXC) {
-                return Mono.just(Pair.of(runData.getFirst(), "MLE"));
-            } else {
-                return Mono.just(Pair.of(runData.getFirst(), "RTE"));
+            if (result.exitValue() == 0) {
+                return RESULT.SUCCESS;
             }
-        }else{
-            Flux<String> outputLines =
-                Flux.using(
-                    () -> new BufferedReader(new FileReader(runData.getSecond()[0].toFile())),
-                    reader -> Flux.fromStream(reader.lines()),
-                    reader -> {
-                        try {
-                            reader.close();
-                        } catch (IOException e) {
-                            log.error("Cannot close reader!", e);
-                        }
-                    }
-                )
-                .filter(line -> line.trim().length() > 0);
-
-            Flux<String> answerLines =
-                Flux.using(
-                    () -> new BufferedReader(new FileReader(answer.toFile())),
-                    reader -> Flux.fromStream(reader.lines()),
-                    reader -> {
-                        try {
-                            reader.close();
-                        } catch (IOException e) {
-                            log.error("Cannot close reader!", e);
-                        }
-                    }
-                )
-                .filter(line -> line.trim().length() > 0);
-
-            return outputLines
-                    .zipWith(answerLines)
-                    .doOnNext(log::info)
-                    .all(linePair -> linePair.getT1().trim().equals(linePair.getT2().trim()))
-                    .map(result -> Pair.of(result ? RESULT.SUCCESS : RESULT.WRONG_ANSWER, ""));
+        } catch (IOException | ExecutionException | InterruptedException | TimeoutException e) {
+            log.error("Compilation error:", e);
         }
+
+        return RESULT.COMPILE_ERROR;
     }
 
-    public Mono<SubmissionStatus> runFormalTest(Long id, TestForm testForm) {
-        Mono<Path> loadSource =
-                Mono.fromCallable(() -> Files.createFile(runtimeContainer.resolve(runtimes.get(testForm.getType()).getSource())))
-                        .flatMap(path -> testForm.getCode().transferTo(path).then(Mono.just(path)));
-
-        Flux<File> loadInputFiles =
-            Mono.fromCallable(() -> ProblemService.testDatasDirectory.resolve(String.valueOf(id)))
-                .flatMapMany(path ->
-                    Flux
-                        .fromArray(
-                            Objects.requireNonNull(
-                                    path.resolve("secret")
-                                        .toFile()
-                                        .listFiles(pathname -> pathname.getName().endsWith(".in"))
-                            )
-                        )
-                        .sort(Comparator.comparing(File::getName))
-                );
-
-        Flux<File> loadAnswerFiles =
-            Mono.fromCallable(() -> ProblemService.testDatasDirectory.resolve(String.valueOf(id)))
-                .flatMapMany(path ->
-                    Flux
-                        .fromArray(
-                            Objects.requireNonNull(
-                                path.resolve("secret")
-                                    .toFile()
-                                    .listFiles(pathname -> pathname.getName().endsWith(".ans"))
-                            )
-                        )
-                        .sort(Comparator.comparing(File::getName))
-                );
-
-        return
-            problemDatabase
-                .findById(id)
-                .zipWith(loadSource)
-                .flatMapMany(testData ->
-                    loadInputFiles
-                        .flatMapSequential(testFile -> runTest(testForm.getType(), testFile.toPath(), testData.getT1().getTl(), testData.getT1().getMl()))
-                        .zipWith(loadAnswerFiles)
-                )
-                .flatMap(runAndAnswerData -> finalizeResults(runAndAnswerData.getT1(), runAndAnswerData.getT2().toPath()))
-                .<SubmissionStatus>handle((result, sink) -> {
-                    if(result.getFirst() != RESULT.SUCCESS){
-                        sink.next(new SubmissionStatus(false, result.getFirst().name(), result.getSecond()));
-                        sink.complete();
-                    }
-                })
-                .next()
-                .log()
-                .switchIfEmpty(Mono.just(new SubmissionStatus(true, RESULT.SUCCESS.name(), "All test cases passed!")));
-    }
-
-    public Mono<TestResult> runCustomTest(TestForm testForm) {
-        Mono<Path> loadSource =
-            Mono.fromCallable(() -> Files.createFile(runtimeContainer.resolve(runtimes.get(testForm.getType()).getSource())))
-                .flatMap(path -> testForm.getCode().transferTo(path).then(Mono.just(path)));
-
-        Mono<Path> loadInput =
-                Mono.fromCallable(() -> Files.createTempFile(runtimeContainer, "test", ".in"))
-                .flatMap(path -> testForm.getInput().transferTo(path).then(Mono.just(path)));
-
+    private TestResult executeTest(Problem problem, TestForm testForm) throws IOException {
         try {
             FileSystemUtils.deleteRecursively(runtimeContainer);
             Files.createDirectory(runtimeContainer);
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            return new TestResult(RESULT.SERVER_ERROR, 0L, 0L, "", "Error setting up runtime");
         }
 
-        return loadSource
-                .then(loadInput)
-                .flatMap(file -> runTest(testForm.getType(), file, 15000L, 3000L))
-                .doOnSuccess(log::info)
-                .map(data -> {
-                        if (data.getFirst() == RESULT.COMPILE_ERROR) {
-                            return new TestResult(data.getFirst(), 0L, 0L, data.getSecond()[0]);
-                        } else {
-                            try(ReversedLinesFileReader rlr = new ReversedLinesFileReader(data.getSecond()[1].toFile(), Charset.defaultCharset())) {
-                                if (data.getFirst() == RESULT.SUCCESS) {
-                                    return new TestResult(data.getFirst(), Long.parseLong(rlr.readLine()), Long.parseLong(rlr.readLine()), data.getSecond()[0]);
-                                } else {
-                                    return new TestResult(data.getFirst(), Long.parseLong(rlr.readLine()), Long.parseLong(rlr.readLine()), data.getSecond()[1]);
-                                }
-                            } catch (IOException e) {
-                                throw new RuntimeException(e);
-                            }
+        Path programSource = Files.createFile(runtimeContainer.resolve(runtimes.get(testForm.getType()).getSource()));
+        Path errorFile = Files.createTempFile(runtimeContainer, "compile", ".error");
+        List<Path> programInput, expectedOutput;
+
+        testForm.getCode().transferTo(programSource.toFile()).block(Duration.ofSeconds(1));
+
+        if(Objects.equals(problem.getId(), CUSTOM_TEST)) {
+            programInput = List.of(Files.createTempFile(runtimeContainer, "test", ".in"));
+            expectedOutput = List.of();
+
+            testForm.getInput().transferTo(programInput.get(0)).block(Duration.ofSeconds(1));
+        } else {
+            programInput = collectProblemFiles(problem.getId(), ".in");
+            expectedOutput = collectProblemFiles(problem.getId(), ".ans");
+        }
+
+        if(compileProgram(testForm.getType(), errorFile) == RESULT.COMPILE_ERROR) {
+            return new TestResult(RESULT.COMPILE_ERROR, 0L, 0L, "", Files.readAllLines(errorFile).stream().limit(20).collect(Collectors.joining("\n")));
+        }
+
+        Long maxTime = 0L, maxMem = 0L;
+
+        for(int i = 0; i < programInput.size(); i++) {
+            Arrays.stream(Objects.requireNonNull(runtimeContainer.toFile().listFiles(file -> Pattern.matches(FILE_PATTERN, file.getName()))))
+                .toList().forEach(FileSystemUtils::deleteRecursively);
+
+            Path output = Files.createTempFile(runtimeContainer, "run", ".out");
+            Path error = Files.createTempFile(runtimeContainer, "run", ".error");
+
+            try {
+                Process result = runtimes.get(testForm.getType()).run(runtimeContainer, output, error, programInput.get(i), problem.getTl(), problem.getMl()).get(20, TimeUnit.SECONDS);
+                RESULT runtimeResult = RESULT.values()[result.exitValue()];
+
+                if(runtimeResult == RESULT.SERVER_ERROR) {
+                    return new TestResult(RESULT.SERVER_ERROR, 0L, 0L, "", "Error running problem");
+                } else {
+                    try(ReversedLinesFileReader reader = new ReversedLinesFileReader(error.toFile())) {
+                        maxTime = Math.max(maxTime, Long.parseLong(reader.readLine()));
+                        maxMem = Math.max(maxMem, Long.parseLong(reader.readLine()));
+                    }
+
+                    if(Objects.equals(problem.getId(), CUSTOM_TEST)) {
+                        return new TestResult(runtimeResult, maxTime, maxMem, Files.readAllLines(output).stream().limit(20).collect(Collectors.joining("\n")), "");
+                    } else if(runtimeResult != RESULT.SUCCESS) {
+                        return new TestResult(runtimeResult, maxTime, maxMem, runtimeResult.name(), "Test case: " + i);
+                    }
+
+                    try(BufferedReader outputReader = new BufferedReader(new FileReader(output.toFile()));
+                        BufferedReader answerReader = new BufferedReader(new FileReader(expectedOutput.get(i).toFile()))) {
+                        if(!Streams.zip(outputReader.lines(), answerReader.lines(), (outLine, ansLine) -> outLine.trim().equals(ansLine.trim())).allMatch(Boolean::booleanValue)) {
+                            outputReader.close();
+                            answerReader.close();
+
+                            return new TestResult(RESULT.WRONG_ANSWER, maxTime, maxMem, "", "Test case: " + i);
                         }
-                })
-                .log();
+                    }
+                }
+            } catch (ExecutionException | InterruptedException | TimeoutException e) {
+                return new TestResult(RESULT.SERVER_ERROR, 0L, 0L, "", "Idleness limit exceeded");
+            }
+        }
+
+        return new TestResult(RESULT.SUCCESS, maxTime, maxMem, "", "All tests passed");
+    }
+
+    public Mono<TestResult> runFormalTest(Long id, TestForm testForm) {
+        return
+            problemDatabase
+                .findById(id)
+                .flatMap(problem -> Mono.fromCallable(() -> submitQueue.submit(() -> executeTest(problem, testForm)).get()))
+                .defaultIfEmpty(new TestResult(RESULT.SERVER_ERROR, 0L, 0L, "", "Problem does not exist"));
+    }
+
+    public Mono<TestResult> runCustomTest(TestForm testForm) {
+        Problem problem = new Problem("CUSTOM", "CUSTOM", 15000L, 3000L);
+
+        problem.setId(CUSTOM_TEST);
+
+        return Mono.fromCallable(() -> submitQueue.submit(() -> executeTest(problem, testForm)).get());
     }
 }

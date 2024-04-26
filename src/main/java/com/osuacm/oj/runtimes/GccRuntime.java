@@ -8,9 +8,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-@Log
 public class GccRuntime implements Runtime {
 
+    final String SOURCE = "solution.c";
     final String COMPILER = "gcc";
     final String WRAPPER = "/source/security/runwrap.o";
 
@@ -45,7 +45,7 @@ public class GccRuntime implements Runtime {
     @Override
     public CompletableFuture<Process> compile(Path context, Path error) throws IOException {
         return new ProcessBuilder()
-            .command(COMPILER, "solution.c")
+            .command(COMPILER, SOURCE)
             .directory(context.toFile())
             .redirectError(error.toFile())
             .start()
@@ -69,13 +69,12 @@ public class GccRuntime implements Runtime {
 
             return runJava.onExit();
         } catch (IOException e) {
-            log.info(e.getMessage());
             throw new RuntimeException(e);
         }
     }
 
     @Override
     public String getSource() {
-        return "solution.c";
+        return SOURCE;
     }
 }

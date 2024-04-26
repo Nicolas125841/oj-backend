@@ -5,8 +5,6 @@ import com.osuacm.oj.stores.problems.Problem;
 import com.osuacm.oj.data.ProblemForm;
 import com.osuacm.oj.stores.problems.ProblemStore;
 import com.osuacm.oj.utils.FileUtil;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;

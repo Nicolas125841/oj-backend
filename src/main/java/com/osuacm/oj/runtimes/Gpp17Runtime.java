@@ -6,9 +6,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-public class OpenJDK17Runtime implements Runtime {
-    final String SOURCE = "Solution.java";
-    final String COMPILER = "javac";
+public class Gpp17Runtime implements Runtime {
+    final String SOURCE = "solution.cpp";
+    final String COMPILER = "g++";
     final String WRAPPER = "/source/security/runwrap.o";
 
     final List<String> RUN_ARGS = List.of(
@@ -36,14 +36,13 @@ public class OpenJDK17Runtime implements Runtime {
         "ALL",
         "--die-with-parent",
         "--new-session",
-        "java",
-        "Solution"
+        "./a.out"
     );
 
     @Override
     public CompletableFuture<Process> compile(Path context, Path error) throws IOException {
         return new ProcessBuilder()
-            .command(COMPILER, SOURCE)
+            .command(COMPILER, "-std=c++17", SOURCE)
             .directory(context.toFile())
             .redirectError(error.toFile())
             .start()
