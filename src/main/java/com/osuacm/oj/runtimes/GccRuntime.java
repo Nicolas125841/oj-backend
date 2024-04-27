@@ -12,7 +12,6 @@ public class GccRuntime implements Runtime {
 
     final String SOURCE = "solution.c";
     final String COMPILER = "gcc";
-    final String WRAPPER = "/source/security/runwrap.o";
 
     final List<String> RUN_ARGS = List.of(
         "bwrap",

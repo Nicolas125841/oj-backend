@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 
 public interface Runtime {
+    String WRAPPER = "/source/security/runwrap.o";
     @Async
     CompletableFuture<Process> compile(Path context, Path error) throws IOException;
 

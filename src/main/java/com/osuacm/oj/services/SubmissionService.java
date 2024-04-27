@@ -3,9 +3,7 @@ package com.osuacm.oj.services;
 import com.google.common.collect.Streams;
 import com.osuacm.oj.data.TestForm;
 import com.osuacm.oj.data.TestResult;
-import com.osuacm.oj.runtimes.GccRuntime;
-import com.osuacm.oj.runtimes.Gpp17Runtime;
-import com.osuacm.oj.runtimes.OpenJDK17Runtime;
+import com.osuacm.oj.runtimes.*;
 import com.osuacm.oj.runtimes.Runtime;
 import com.osuacm.oj.stores.problems.Problem;
 import com.osuacm.oj.stores.problems.ProblemStore;
@@ -40,7 +38,8 @@ public class SubmissionService {
     private final Map<String, Runtime> runtimes = Map.of(
         "C 98", new GccRuntime(),
         "Java 17", new OpenJDK17Runtime(),
-        "C++ 17", new Gpp17Runtime()
+        "C++ 17", new Gpp17Runtime(),
+        "Python 3", new Python3Runtime()
     );
     @Autowired
     private ProblemStore problemDatabase;
@@ -123,7 +122,14 @@ public class SubmissionService {
                     }
 
                     if(Objects.equals(problem.getId(), CUSTOM_TEST)) {
-                        return new TestResult(runtimeResult, maxTime, maxMem, Files.readAllLines(output).stream().limit(20).collect(Collectors.joining("\n")), "");
+                        Integer errorLength = Files.readAllLines(error).size();
+
+                        return new TestResult(
+                            runtimeResult,
+                            maxTime,
+                            maxMem,
+                            Files.readAllLines(output).stream().limit(20).collect(Collectors.joining("\n")),
+                            Files.readAllLines(error).subList(0, Math.max(0, errorLength - 2)).stream().limit(20).collect(Collectors.joining("\n")));
                     } else if(runtimeResult != RESULT.SUCCESS) {
                         return new TestResult(runtimeResult, maxTime, maxMem, runtimeResult.name(), "Test case: " + i);
                     }

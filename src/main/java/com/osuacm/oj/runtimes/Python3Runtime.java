@@ -6,9 +6,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-public class Gpp17Runtime implements Runtime {
-    final String SOURCE = "solution.cpp";
-    final String COMPILER = "g++";
+public class Python3Runtime implements Runtime {
+    final String SOURCE = "solution.py";
 
     final List<String> RUN_ARGS = List.of(
         "bwrap",
@@ -35,17 +34,12 @@ public class Gpp17Runtime implements Runtime {
         "ALL",
         "--die-with-parent",
         "--new-session",
-        "./a.out"
+        "python3", "solution.py"
     );
 
     @Override
     public CompletableFuture<Process> compile(Path context, Path error) throws IOException {
-        return new ProcessBuilder()
-            .command(COMPILER, "-std=c++17", SOURCE)
-            .directory(context.toFile())
-            .redirectError(error.toFile())
-            .start()
-            .onExit();
+        return new ProcessBuilder("true").start().onExit();
     }
 
     @Override

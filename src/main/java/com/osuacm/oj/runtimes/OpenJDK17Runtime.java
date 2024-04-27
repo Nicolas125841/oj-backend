@@ -9,35 +9,26 @@ import java.util.concurrent.CompletableFuture;
 public class OpenJDK17Runtime implements Runtime {
     final String SOURCE = "Solution.java";
     final String COMPILER = "javac";
-    final String WRAPPER = "/source/security/runwrap.o";
 
     final List<String> RUN_ARGS = List.of(
         "bwrap",
-        "--ro-bind",
-        "/usr",
-        "/usr",
-        "--ro-bind",
-        "/runtime",
-        "/subject",
-        "--symlink",
-        "usr/lib",
-        "/lib",
-        "--symlink",
-        "usr/lib64",
-        "/lib64",
-        "--chdir",
-        "/subject",
+        "--ro-bind", "/etc/alternatives", "/etc/alternatives",
+        "--setenv", "JAVA_HOME", "/etc/alternatives/jre_17_openjdk",
+        "--setenv", "LD_LIBRARY_PATH", "/etc/alternatives/jre_17_openjdk/lib",
+        "--ro-bind", "/usr", "/usr",
+        "--ro-bind", "/runtime", "/subject",
+        "--symlink", "usr/lib", "/lib",
+        "--symlink", "usr/lib64", "/lib64",
+        "--chdir", "/subject",
         "--unshare-user",
         "--unshare-net",
         "--unshare-ipc",
         "--unshare-cgroup",
         "--unshare-uts",
-        "--cap-drop",
-        "ALL",
+        "--cap-drop", "ALL",
         "--die-with-parent",
         "--new-session",
-        "java",
-        "Solution"
+        "java", "Solution"
     );
 
     @Override
