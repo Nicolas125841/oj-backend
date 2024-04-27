@@ -63,6 +63,7 @@ public class AdminSecurityConfig {
             .csrf(ServerHttpSecurity.CsrfSpec::disable)
             .securityMatcher(new PathPatternParserServerWebExchangeMatcher("/problemData/**"))
             .authorizeExchange(authorize -> authorize.anyExchange().permitAll())
+            .headers(headerSpec -> headerSpec.frameOptions(ServerHttpSecurity.HeaderSpec.FrameOptionsSpec::disable))
             .httpBasic(withDefaults());
 
         return http.build();
