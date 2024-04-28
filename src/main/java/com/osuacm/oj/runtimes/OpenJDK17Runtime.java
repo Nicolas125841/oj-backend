@@ -32,17 +32,16 @@ public class OpenJDK17Runtime implements Runtime {
     );
 
     @Override
-    public CompletableFuture<Process> compile(Path context, Path error) throws IOException {
+    public Process compile(Path context, Path error) throws IOException {
         return new ProcessBuilder()
             .command(COMPILER, SOURCE)
             .directory(context.toFile())
             .redirectError(error.toFile())
-            .start()
-            .onExit();
+            .start();
     }
 
     @Override
-    public CompletableFuture<Process> run(Path context, Path output, Path error, Path input, Long tl, Long ml) {
+    public Process run(Path context, Path output, Path error, Path input, Long tl, Long ml) {
         try {
             List<String> runArgs = new ArrayList<>(List.of(WRAPPER, tl.toString(), ml.toString()));
 
@@ -56,7 +55,7 @@ public class OpenJDK17Runtime implements Runtime {
                 .redirectInput(input.toFile())
                 .start();
 
-            return runJava.onExit();
+            return runJava;
         } catch (IOException e) {
             throw new RuntimeException(e);
         }

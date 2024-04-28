@@ -38,12 +38,12 @@ public class Python3Runtime implements Runtime {
     );
 
     @Override
-    public CompletableFuture<Process> compile(Path context, Path error) throws IOException {
-        return new ProcessBuilder("true").start().onExit();
+    public Process compile(Path context, Path error) throws IOException {
+        return new ProcessBuilder("true").start();
     }
 
     @Override
-    public CompletableFuture<Process> run(Path context, Path output, Path error, Path input, Long tl, Long ml) {
+    public Process run(Path context, Path output, Path error, Path input, Long tl, Long ml) {
         try {
             List<String> runArgs = new ArrayList<>(List.of(WRAPPER, tl.toString(), ml.toString()));
 
@@ -57,7 +57,7 @@ public class Python3Runtime implements Runtime {
                 .redirectInput(input.toFile())
                 .start();
 
-            return runJava.onExit();
+            return runJava;
         } catch (IOException e) {
             throw new RuntimeException(e);
         }

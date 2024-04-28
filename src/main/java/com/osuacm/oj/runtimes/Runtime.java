@@ -8,11 +8,11 @@ import java.util.concurrent.CompletableFuture;
 
 public interface Runtime {
     String WRAPPER = "/source/security/runwrap.o";
-    @Async
-    CompletableFuture<Process> compile(Path context, Path error) throws IOException;
 
-    @Async
-    CompletableFuture<Process> run(Path context, Path output, Path error, Path input, Long tl, Long ml) throws IOException;
+    Process compile(Path context, Path error) throws IOException;
+
+
+    Process run(Path context, Path output, Path error, Path input, Long tl, Long ml) throws IOException;
 
     String getSource();
 }

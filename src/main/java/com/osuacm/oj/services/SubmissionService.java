@@ -60,12 +60,20 @@ public class SubmissionService {
 
     private RESULT compileProgram(String runtime, Path errorTarget) {
         try {
-            Process result = runtimes.get(runtime).compile(runtimeContainer, errorTarget).get(20, TimeUnit.SECONDS);
+            Process result = runtimes.get(runtime).compile(runtimeContainer, errorTarget);
 
-            if (result.exitValue() == 0) {
-                return RESULT.SUCCESS;
+            try {
+                result = result.onExit().get(20, TimeUnit.SECONDS);
+
+                if (result.exitValue() == 0) {
+                    return RESULT.SUCCESS;
+                }
+            } catch (ExecutionException | InterruptedException | TimeoutException e) {
+                result.destroyForcibly();
+
+                log.error("Compilation error:", e);
             }
-        } catch (IOException | ExecutionException | InterruptedException | TimeoutException e) {
+        } catch (IOException e) {
             log.error("Compilation error:", e);
         }
 
@@ -108,9 +116,11 @@ public class SubmissionService {
 
             Path output = Files.createTempFile(runtimeContainer, "run", ".out");
             Path error = Files.createTempFile(runtimeContainer, "run", ".error");
+            Process result = runtimes.get(testForm.getType()).run(runtimeContainer, output, error, programInput.get(i), problem.getTl(), problem.getMl());
 
             try {
-                Process result = runtimes.get(testForm.getType()).run(runtimeContainer, output, error, programInput.get(i), problem.getTl(), problem.getMl()).get(20, TimeUnit.SECONDS);
+                result = result.onExit().get(20, TimeUnit.SECONDS);
+
                 RESULT runtimeResult = RESULT.values()[result.exitValue()];
 
                 if(runtimeResult == RESULT.SERVER_ERROR) {
@@ -145,6 +155,8 @@ public class SubmissionService {
                     }
                 }
             } catch (ExecutionException | InterruptedException | TimeoutException e) {
+                result.destroyForcibly();
+
                 return new TestResult(RESULT.SERVER_ERROR, 0L, 0L, "", "Idleness limit exceeded");
             }
         }

@@ -97,6 +97,8 @@ int main(int argc, char* argv[]) {
         return SERVER_ERROR;
     }
 
+    SAFE(remove_cgroup() && errno != ENOENT);
+
     long tl = atol(argv[1]);
     long ml = atol(argv[2]);
     char** cmd = &argv[3];
